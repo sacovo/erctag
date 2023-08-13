@@ -1,0 +1,18 @@
+[build-system]
+requires = ['setuptools>=36.6.0', 'wheel']
+
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = "erctag"
+version = "0.0.1"
+dependencies = ["click", "numpy", "opencv-python", "joblib"]
+authors = [{ name = "Sandro Covo", email = "sandro.covo@fhnw.ch" }]
+description = "Library to detect alvar tags for the ERC."
+
+[project.optional-dependencies]
+dev = ["jupyterlab", "matplotlib"]
+test = ["pytest"]
+
+[project.scripts]
+erctag = "erctag.main:cli"
