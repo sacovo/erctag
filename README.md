@@ -1,6 +1,19 @@
 # ERC Tag Detection
 
-This library provides detection capabilites for ALVAR Tags, that are used by the ERC.
+This library provides detection capabilities for ALVAR Tags, that are used by the ERC.
+
+## Installation
+
+
+```sh
+# Either via ssh
+pip install git+ssh://git@gitlab.fhnw.ch/fhnw-rover/erc-tag-detection.git
+
+# Or via http
+
+pip install git+https://gitlab.fhnw.ch/fhnw-rover/erc-tag-detection.git
+
+```
 
 
 ## Usage
