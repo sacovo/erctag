@@ -25,7 +25,10 @@ def cli():
 @click.option("--calibration", type=click.Path())
 @click.option("--tag-size", type=int, default=10)
 @click.option("--visualize/--no-visualize", default=False)
-def detect(folder, calibration=None, tag_size=10, visualize=True, **kwargs):
+@click.option("--run-name", default=None)
+def detect(
+    folder, calibration=None, tag_size=10, visualize=True, run_name=None, **kwargs
+):
     params = Params(**kwargs)
 
     if calibration:
@@ -51,9 +54,19 @@ def detect(folder, calibration=None, tag_size=10, visualize=True, **kwargs):
         detection = detector.detect_tags(img)
 
         out = visualize_tags(img, detection, font_size=1.2)
+        cv2.putText(
+            out,
+            f"{run_name if run_name else 'Path'}: {os.path.basename(path)}",
+            (0, 30),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.2,
+            (255, 0, 0),
+            2,
+        )
+
         cv2.imshow("output", out)
 
-        if cv2.waitKey(5) == ord("q"):
+        if cv2.waitKey(1) == ord("q"):
             break
 
     cv2.destroyWindow("output")

@@ -1,8 +1,10 @@
+import math
 from dataclasses import dataclass
 from typing import List, Optional
 
 import cv2
 import numpy as np
+from joblib import Parallel, delayed
 
 from erctag.alvar_tags import ALVAR_TAGS
 
@@ -33,6 +35,7 @@ class Detection:
 
     value: np.ndarray
     distance: float
+    rotation: int = 0
 
     t: Optional[np.ndarray] = None
     R: Optional[np.ndarray] = None
@@ -116,18 +119,21 @@ def validate_and_binarize_tag(tag):
     :return: Binarized grid values if tag is valid, else None.
     """
 
-    # Find the indices for always-black and always-white cells
+    rotations = []
+    for i in range(4):
+        rotated_tag = np.rot90(tag, k=i)
+        # Extract values for known black and white cells
+        black_cells_values = [rotated_tag[i, j] for i, j in black_cells_indices]
+        white_cells_values = [rotated_tag[i, j] for i, j in white_cells_indices]
 
-    # Extract values for known black and white cells
-    black_cells_values = [tag[i, j] for i, j in black_cells_indices]
-    white_cells_values = [tag[i, j] for i, j in white_cells_indices]
+        # Find threshold
+        threshold = find_threshold(black_cells_values, white_cells_values)
 
-    # Find threshold
-    threshold = find_threshold(black_cells_values, white_cells_values)
+        if threshold is None:
+            continue
+        rotations.append((threshold, rotated_tag, i))
 
-    if threshold is None:
-        return False
-    return threshold
+    return rotations
 
 
 def find_possible_tags(gray, params: Params, visualize: bool = False):
@@ -355,14 +361,15 @@ class TagDetector:
         self.detection_params = detection_params
         self.tag_list = np.array(tag_list)
         self.calibration = calibration
-        self.tag_size = tag_size
         self.n_jobs = n_jobs
+        self.tag_size = tag_size
         self.visualize = visualize
+        self.parallel = Parallel(n_jobs=self.n_jobs)
         self.clahe = cv2.createCLAHE(
-            clipLimit=detection_params.clip_limit,
+            clipLimit=self.detection_params.clip_limit,
             tileGridSize=(
-                detection_params.tile_grid_size,
-                detection_params.tile_grid_size,
+                self.detection_params.tile_grid_size,
+                self.detection_params.tile_grid_size,
             ),
         )
 
@@ -381,38 +388,59 @@ class TagDetector:
         gridsize = self.detection_params.tag_gridsize
         padding = self.detection_params.tag_padding
 
-        detections = []
-
-        for corner in corners:
-            detections.append(self.extract_tag_info(gray, corner, gridsize, padding))
+        detections = self.parallel(
+            delayed(extract_tag_info)(
+                gray,
+                corner,
+                gridsize,
+                padding,
+                self.tag_list,
+                self.calibration,
+                self.tag_size,
+            )
+            for corner in corners
+        )
 
         return list(filter(lambda x: x is not None, detections))
 
-    def extract_tag_info(self, gray, corner, gridsize, padding):
-        tag, H = extract_tag(gray, corner, gridsize + padding * 2)
-        threshold = validate_and_binarize_tag(tag)
 
-        if not threshold:
-            return None
+def extract_tag_info(
+    gray, corner, gridsize, padding, tag_list, calibration=None, tag_size=None
+):
+    tag, H = extract_tag(gray, corner, gridsize + padding * 2)
+    rotations = validate_and_binarize_tag(tag)
 
+    if len(rotations) == 0:
+        return None
+
+    lowest_distance = math.inf
+    detection = None
+
+    for threshold, tag, rotation in rotations:
         tag = tag - (threshold - 0.5) / 2
 
         tag = tag[padding:-padding, padding:-padding].reshape(-1)
-        distances = abs(self.tag_list - tag).sum(axis=1)
+        distances = abs(tag_list - tag).sum(axis=1)
 
         min_idx = distances.argmin()
         distance = distances[min_idx]
 
-        detection = Detection(
-            tag_id=min_idx,
-            value=tag,
-            distance=distance,
-            corners=corner,
-        )
+        if distance <= lowest_distance:
+            detection = Detection(
+                tag_id=min_idx,
+                value=tag,
+                distance=distance,
+                corners=corner,
+                rotation=rotation,
+            )
+            lowest_distance = distance
 
-        if self.calibration:
-            t, R = get_translation_vector(corner, H, self.calibration, self.tag_size)
-            detection.t = t
+    if detection is None:
+        return None
 
-            detection.R = R
-        return detection
+    if calibration and tag_size:
+        t, R = get_translation_vector(corner, H, calibration, tag_size)
+        detection.t = t
+
+        detection.R = R
+    return detection
