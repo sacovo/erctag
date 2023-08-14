@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from joblib import Parallel, delayed
 
-from erctag.alvar_tags import ALVAR_TAGS
+from erctag.alvar_tags import ALVAR_TAGS, validate_and_binarize_tag
 
 
 @dataclass
@@ -41,38 +41,6 @@ class Detection:
     R: Optional[np.ndarray] = None
 
 
-ALWAYS_BLACK = np.array(
-    [
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    ]
-)
-
-ALWAYS_WHITE = np.array(
-    [
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-    ]
-)
-
-black_cells_indices = np.argwhere(ALWAYS_BLACK == 0)
-white_cells_indices = np.argwhere(ALWAYS_WHITE == 1)
-
-
 def remove_shadows(img, dilate_kernel_size, median_blur_size):
     rgb_planes = cv2.split(img)
     result_planes = []
@@ -87,53 +55,6 @@ def remove_shadows(img, dilate_kernel_size, median_blur_size):
     shadow_rem_img = cv2.merge(result_planes)
 
     return shadow_rem_img
-
-
-def find_threshold(black_cells, white_cells):
-    """
-    Finds a threshold to binarize tag values based on the given black and white cell
-    criteria.
-
-    :param black_cells: Array of cells that should be detected as black.
-    :param white_cells: Array of cells that should be detected as white.
-    :return: A threshold value or None if a valid threshold is not found.
-    """
-
-    max_black_value = np.max(black_cells)
-    min_white_value = np.min(white_cells)
-
-    if max_black_value < min_white_value:
-        return (max_black_value + min_white_value) / 2
-    else:
-        return None
-
-
-def validate_and_binarize_tag(tag):
-    """
-    Validates if the given grid values correspond to a genuine tag based on known black
-    and white cells.
-
-    Returns the binarized tag if valid, else None.
-
-    :param grid_values: 2D array of the tag's grid values.
-    :return: Binarized grid values if tag is valid, else None.
-    """
-
-    rotations = []
-    for i in range(4):
-        rotated_tag = np.rot90(tag, k=i)
-        # Extract values for known black and white cells
-        black_cells_values = [rotated_tag[i, j] for i, j in black_cells_indices]
-        white_cells_values = [rotated_tag[i, j] for i, j in white_cells_indices]
-
-        # Find threshold
-        threshold = find_threshold(black_cells_values, white_cells_values)
-
-        if threshold is None:
-            continue
-        rotations.append((threshold, rotated_tag, i))
-
-    return rotations
 
 
 def find_possible_tags(gray, params: Params, visualize: bool = False):
@@ -167,7 +88,7 @@ def find_possible_tags(gray, params: Params, visualize: bool = False):
         ):
             # Convert the local coordinates to global coordinates
             corners = [(pt[0][0], pt[0][1]) for pt in approx]
-            tags_corners.append(corners)
+            tags_corners.append(order_corners(corners))
 
     if visualize:
         cv2.destroyAllWindows()
@@ -228,13 +149,12 @@ def extract_tag(img, corners, gridsize=9):
                 transform of the tag
     """
 
-    ordered_corners = order_corners(corners)
     # Define points for the desired perspective (a square)
     side = 250
     dst_pts = np.array([[0, 0], [side, 0], [side, side], [0, side]], dtype=np.float32)
 
     # Perspective transformation
-    matrix = cv2.getPerspectiveTransform(np.float32(ordered_corners), dst_pts)
+    matrix = cv2.getPerspectiveTransform(np.float32(corners), dst_pts)
     warped = cv2.warpPerspective(img, matrix, (side, side))
 
     # Normalize the values in the image to lie in range [0, 1]
@@ -243,20 +163,15 @@ def extract_tag(img, corners, gridsize=9):
     )
 
     # Sample the grid cells and compute average value for each cell
-    cell_size = side // gridsize
-    grid_values = np.zeros((gridsize, gridsize))
 
-    for i in range(gridsize):
-        for j in range(gridsize):
-            cell = normalized[
-                i * cell_size : (i + 1) * cell_size, j * cell_size : (j + 1) * cell_size
-            ]
-            grid_values[i, j] = np.mean(cell)
-
-    return grid_values.T, matrix
+    grid_values = cv2.resize(
+        normalized, (gridsize, gridsize), interpolation=cv2.INTER_AREA
+    )
+    return grid_values.T
 
 
-def get_translation_vector(corners, h, K, tag_size: float):
+def get_translation_vector(corners, K, tag_size: float, distortion=None):
+    corners = np.array(corners).astype(np.float32)
     half_size = tag_size / 2.0
     obj_points = np.array(
         [
@@ -264,11 +179,18 @@ def get_translation_vector(corners, h, K, tag_size: float):
             [half_size, -half_size, 0.0],
             [half_size, half_size, 0.0],
             [-half_size, half_size, 0.0],
-        ]
+        ],
+        dtype=np.float32,
     )
 
+    if distortion is not None:
+        corners = cv2.undistortPoints(corners.reshape(-1, 1, 2), K, distortion)
+
     # Decompose the homography
-    h_inv = np.linalg.inv(K) @ h
+    dst_pts = obj_points[:, :2].astype(np.float32)
+    homography = cv2.getPerspectiveTransform(np.float32(corners), dst_pts)
+
+    h_inv = np.linalg.inv(K) @ homography
     h1 = h_inv[:, 0]
     h2 = h_inv[:, 1]
     h3 = np.cross(h1, h2)
@@ -282,7 +204,7 @@ def get_translation_vector(corners, h, K, tag_size: float):
     # Calculate apparent size in image
     center = np.mean(corners, axis=0)
     projected_corners = cv2.perspectiveTransform(
-        obj_points[:, :2].reshape(-1, 1, 2), h
+        obj_points[:, :2].reshape(-1, 1, 2), homography
     ).reshape(-1, 2)
     distances = np.linalg.norm(projected_corners - center, axis=1)
     apparent_size = np.mean(distances)
@@ -348,6 +270,7 @@ class TagDetector:
         tag_list=ALVAR_TAGS,
         detection_params: Optional[Params] = None,
         calibration=None,
+        distortion=None,
         tag_size=10,
         n_jobs=-1,
         visualize=False,
@@ -361,6 +284,7 @@ class TagDetector:
         self.detection_params = detection_params
         self.tag_list = np.array(tag_list)
         self.calibration = calibration
+        self.distortion = distortion
         self.n_jobs = n_jobs
         self.tag_size = tag_size
         self.visualize = visualize
@@ -397,6 +321,7 @@ class TagDetector:
                 self.tag_list,
                 self.calibration,
                 self.tag_size,
+                self.distortion,
             )
             for corner in corners
         )
@@ -405,9 +330,16 @@ class TagDetector:
 
 
 def extract_tag_info(
-    gray, corner, gridsize, padding, tag_list, calibration=None, tag_size=None
+    gray,
+    corner,
+    gridsize,
+    padding,
+    tag_list,
+    calibration=None,
+    tag_size=None,
+    distortion=None,
 ):
-    tag, H = extract_tag(gray, corner, gridsize + padding * 2)
+    tag = extract_tag(gray, corner, gridsize + padding * 2)
     rotations = validate_and_binarize_tag(tag)
 
     if len(rotations) == 0:
@@ -438,8 +370,10 @@ def extract_tag_info(
     if detection is None:
         return None
 
-    if calibration and tag_size:
-        t, R = get_translation_vector(corner, H, calibration, tag_size)
+    if calibration is not None and tag_size is not None:
+        t, R = get_translation_vector(
+            detection.corners, calibration, tag_size, distortion
+        )
         detection.t = t
 
         detection.R = R

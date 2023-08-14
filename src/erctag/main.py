@@ -69,4 +69,5 @@ def detect(
         if cv2.waitKey(1) == ord("q"):
             break
 
-    cv2.destroyWindow("output")
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
