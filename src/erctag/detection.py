@@ -1,12 +1,13 @@
 import math
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
 from joblib import Parallel, delayed
 
 from erctag.alvar_tags import ALVAR_TAGS, validate_and_binarize_tag
+from erctag.calculation import compute_angle_and_distance
 
 
 @dataclass
@@ -37,8 +38,8 @@ class Detection:
     distance: float
     rotation: int = 0
 
-    t: Optional[np.ndarray] = None
-    R: Optional[np.ndarray] = None
+    depth: Optional[float] = None
+    angles: Optional[Tuple[float, float]] = None
 
 
 def remove_shadows(img, dilate_kernel_size, median_blur_size):
@@ -94,24 +95,6 @@ def find_possible_tags(gray, params: Params, visualize: bool = False):
         cv2.destroyAllWindows()
 
     return tags_corners
-
-
-def draw_possible_tags(img, tags_corners):
-    img_copy = img.copy()
-
-    for corners in tags_corners:
-        int_corners = np.array(corners, dtype=np.int32).reshape((-1, 1, 2))
-
-        cv2.polylines(
-            img_copy, [int_corners], isClosed=True, color=(0, 255, 0), thickness=2
-        )
-
-        for x, y in corners:
-            cv2.circle(
-                img_copy, (int(x), int(y)), radius=5, color=(0, 0, 255), thickness=-1
-            )
-
-    return img_copy
 
 
 def order_corners(corners):
@@ -170,54 +153,6 @@ def extract_tag(img, corners, gridsize=9):
     return grid_values.T
 
 
-def get_translation_vector(corners, K, tag_size, distortion=None):
-    # 1. Undistort the detected corners if distortion coefficients are provided
-    corners = np.array(corners, dtype=np.float32)
-    if distortion is not None:
-        corners = cv2.undistortPoints(
-            corners.reshape(-1, 1, 2), K, distortion, None, K
-        ).reshape(-1, 2)
-
-    # Define the real-world coordinates of the tag corners (assuming Z=0 for the tag plane)
-    half_size = tag_size / 2.0
-    obj_points = np.array(
-        [
-            [-half_size, -half_size],
-            [half_size, -half_size],
-            [half_size, half_size],
-            [-half_size, half_size],
-        ],
-        dtype=np.float32,
-    )
-
-    # 2. Compute homography
-    h, _ = cv2.findHomography(corners, obj_points)
-
-    # 3. Decompose the homography matrix
-    _, Rs, ts, _ = cv2.decomposeHomographyMat(h, K)
-
-    # 4. Using the longest side of the detected tag in the image, compute the depth using triangle similarity
-    side_lengths = [np.linalg.norm(corners[i] - corners[(i + 1) % 4]) for i in range(4)]
-    apparent_size = max(side_lengths)
-
-    fx = K[0, 0]
-    depth = (fx * tag_size) / apparent_size
-
-    # 5. Scale the initial translation with the computed depth
-
-    # Pick the solution with a positive Z value
-    R, t = Rs[0], ts[0]
-
-    for i in range(len(ts)):
-        if ts[i][2] > 0:
-            R = Rs[i]
-            t = ts[i]
-            break
-
-    t = t * (depth / np.linalg.norm(t))
-    return t, R
-
-
 def visualize_tags(img, detections, font_size=1.2):
     """
     Visualizes detected tags on the original image.
@@ -232,7 +167,7 @@ def visualize_tags(img, detections, font_size=1.2):
     # Make a copy of the original image to avoid modifying it directly
     img_copy = img.copy()
 
-    for detection in detections:
+    for i, detection in enumerate(detections):
         corners, tag_id, confidence = (
             detection.corners,
             detection.tag_id,
@@ -255,7 +190,7 @@ def visualize_tags(img, detections, font_size=1.2):
         centroid = np.mean(corners, axis=0).astype(int)
         cv2.putText(
             img_copy,
-            f"ID: {tag_id}, Dist: {confidence:.2f}",
+            f"ID: {tag_id}, Dist: {confidence:.2f} ({i})",
             (centroid[0] - 150, centroid[1] - 90),
             cv2.FONT_HERSHEY_SIMPLEX,
             font_size,
@@ -373,10 +308,11 @@ def extract_tag_info(
         return None
 
     if calibration is not None and tag_size is not None:
-        t, R = get_translation_vector(
-            detection.corners, calibration, tag_size, distortion
+        z, theta_x, theta_y = compute_angle_and_distance(
+            detection.corners, tag_size, calibration, distortion
         )
-        detection.t = t
 
-        detection.R = R
+        detection.depth = z
+        detection.angles = (theta_x, theta_y)
+
     return detection
