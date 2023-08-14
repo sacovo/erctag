@@ -5,7 +5,7 @@ build-backend = 'setuptools.build_meta'
 
 [project]
 name = "erctag"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = ["click", "numpy", "opencv-python", "joblib"]
 authors = [{ name = "Sandro Covo", email = "sandro.covo@fhnw.ch" }]
 description = "Library to detect alvar tags for the ERC."

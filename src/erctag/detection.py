@@ -170,50 +170,52 @@ def extract_tag(img, corners, gridsize=9):
     return grid_values.T
 
 
-def get_translation_vector(corners, K, tag_size: float, distortion=None):
-    corners = np.array(corners).astype(np.float32)
+def get_translation_vector(corners, K, tag_size, distortion=None):
+    # 1. Undistort the detected corners if distortion coefficients are provided
+    corners = np.array(corners, dtype=np.float32)
+    if distortion is not None:
+        corners = cv2.undistortPoints(
+            corners.reshape(-1, 1, 2), K, distortion, None, K
+        ).reshape(-1, 2)
+
+    # Define the real-world coordinates of the tag corners (assuming Z=0 for the tag plane)
     half_size = tag_size / 2.0
     obj_points = np.array(
         [
-            [-half_size, -half_size, 0.0],
-            [half_size, -half_size, 0.0],
-            [half_size, half_size, 0.0],
-            [-half_size, half_size, 0.0],
+            [-half_size, -half_size],
+            [half_size, -half_size],
+            [half_size, half_size],
+            [-half_size, half_size],
         ],
         dtype=np.float32,
     )
 
-    if distortion is not None:
-        corners = cv2.undistortPoints(corners.reshape(-1, 1, 2), K, distortion)
+    # 2. Compute homography
+    h, _ = cv2.findHomography(corners, obj_points)
 
-    # Decompose the homography
-    dst_pts = obj_points[:, :2].astype(np.float32)
-    homography = cv2.getPerspectiveTransform(np.float32(corners), dst_pts)
+    # 3. Decompose the homography matrix
+    _, Rs, ts, _ = cv2.decomposeHomographyMat(h, K)
 
-    h_inv = np.linalg.inv(K) @ homography
-    h1 = h_inv[:, 0]
-    h2 = h_inv[:, 1]
-    h3 = np.cross(h1, h2)
+    # 4. Using the longest side of the detected tag in the image, compute the depth using triangle similarity
+    side_lengths = [np.linalg.norm(corners[i] - corners[(i + 1) % 4]) for i in range(4)]
+    apparent_size = max(side_lengths)
 
-    R_rough = np.column_stack((h1, h2, h3))
-    U, _, Vt = np.linalg.svd(R_rough)
-    R = U @ Vt
+    fx = K[0, 0]
+    depth = (fx * tag_size) / apparent_size
 
-    t = h_inv[:, 2] / np.linalg.norm(h1)
+    # 5. Scale the initial translation with the computed depth
 
-    # Calculate apparent size in image
-    center = np.mean(corners, axis=0)
-    projected_corners = cv2.perspectiveTransform(
-        obj_points[:, :2].reshape(-1, 1, 2), homography
-    ).reshape(-1, 2)
-    distances = np.linalg.norm(projected_corners - center, axis=1)
-    apparent_size = np.mean(distances)
+    # Pick the solution with a positive Z value
+    R, t = Rs[0], ts[0]
 
-    # Adjust translation using apparent size
-    scale_factor = tag_size / apparent_size
-    t_adjusted = t * scale_factor
+    for i in range(len(ts)):
+        if ts[i][2] > 0:
+            R = Rs[i]
+            t = ts[i]
+            break
 
-    return t_adjusted, R
+    t = t * (depth / np.linalg.norm(t))
+    return t, R
 
 
 def visualize_tags(img, detections, font_size=1.2):
