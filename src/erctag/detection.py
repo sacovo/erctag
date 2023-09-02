@@ -246,6 +246,9 @@ class TagDetector:
         corners = find_possible_tags(
             gray, self.detection_params, visualize=self.visualize
         )
+        if len(corners) == 0:
+            return []
+
         gridsize = self.detection_params.tag_gridsize
         padding = self.detection_params.tag_padding
 
