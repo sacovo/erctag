@@ -15,7 +15,7 @@ class Params:
     binary_threshold: int = 180
 
     min_tag_area: int = 100
-    max_tag_area: int = 10000
+    max_tag_area: int = 100000
 
     epsilon_factor: float = 0.04
 
@@ -72,9 +72,7 @@ def find_possible_tags(gray, params: Params, visualize: bool = False):
     if visualize:
         cv2.imshow("roi", tag_area)
     # Find contours of potential tags within the cropped ROI
-    tag_contours, _ = cv2.findContours(
-        tag_area, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-    )
+    tag_contours, _ = cv2.findContours(tag_area, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
     if visualize:
         cv2.waitKey(0)
@@ -241,7 +239,6 @@ class TagDetector:
             self.detection_params.median_blur_size,
         )
         gray = cv2.cvtColor(no_shadow, cv2.COLOR_BGR2GRAY)
-        self.clahe.apply(gray)
 
         corners = find_possible_tags(
             gray, self.detection_params, visualize=self.visualize
