@@ -26,7 +26,7 @@ class Params:
     tile_grid_size: int = 8
 
     dilate_kernel_size: int = 11
-    median_blur_size: int = 65
+    median_blur_size: int = 55
 
 
 @dataclass
