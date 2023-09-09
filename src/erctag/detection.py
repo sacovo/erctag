@@ -15,7 +15,7 @@ class Params:
     binary_threshold: int = 180
 
     min_tag_area: int = 100
-    max_tag_area: int = 100000
+    max_tag_area: int = 1_000_000
 
     epsilon_factor: float = 0.04
 
@@ -25,8 +25,8 @@ class Params:
     clip_limit: int = 2
     tile_grid_size: int = 8
 
-    dilate_kernel_size: int = 7
-    median_blur_size: int = 55
+    dilate_kernel_size: int = 11
+    median_blur_size: int = 65
 
 
 @dataclass
